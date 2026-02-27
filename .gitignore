@@ -1,0 +1,28 @@
+# Binaries
+panel.exe
+panel
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Environment variables (sensitive data)
+.env
+.env.local
+.env.*.local
+
+# Go build/cache
+*.test
+*.out
+vendor/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
