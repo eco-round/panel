@@ -155,7 +155,7 @@ func (a *App) refreshStatsView() {
 			yieldBalance = float64(a.state.VaultStats.YieldBalance.Uint64()) / 1e6
 			chainStatus = "[green]● on-chain"
 		} else if a.state.ChainError != nil {
-			chainStatus = "[red]● error"
+			chainStatus = fmt.Sprintf("[red]● error: %v", a.state.ChainError)
 		} else {
 			chainStatus = "[yellow]● loading..."
 		}

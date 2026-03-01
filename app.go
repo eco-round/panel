@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
@@ -52,8 +53,9 @@ type App struct {
 	inputField  *tview.InputField
 
 	// Clients
-	api   *APIClient   // Admin API (HTTP)
-	chain *ChainClient // On-chain (RPC)
+	api          *APIClient   // Admin API (HTTP)
+	chain        *ChainClient // On-chain (RPC)
+	chainInitErr error        // Stored so Run() can display it in the TUI log
 
 	// State — ONLY accessed from UI thread (no mutex needed)
 	state     AppState
@@ -167,6 +169,13 @@ func (a *App) Run() error {
 	a.addLog("[aqua::b]╚══════════════════════════════════════════════╝")
 	a.addLog("[darkgray]Type [yellow]help [darkgray]for commands  |  [yellow]Tab [darkgray]switch focus  |  [yellow]Esc [darkgray]command input")
 
+	if a.chainInitErr != nil {
+		a.addLog(fmt.Sprintf("[red]⚠ Chain init failed: %v", a.chainInitErr))
+		a.addLog("[red]  match create requires chain — check RPC_URL / OWNER_PRIVATE_KEY in .env")
+	} else if a.chain != nil {
+		a.addLog("[green]✓ Chain connected")
+	}
+
 	// Start worker + UI ticker
 	go a.dataWorker()
 	go a.uiTicker()
@@ -182,7 +191,7 @@ func (a *App) Run() error {
 // ════════════════════════════════════════════════════════════════════════
 
 func (a *App) dataWorker() {
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
 	for {

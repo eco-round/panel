@@ -89,12 +89,14 @@ func (c *APIClient) GetMatch(id uint) (*Match, error) {
 
 // CreateMatchRequest mirrors the API's request body.
 type CreateMatchRequest struct {
-	TeamAName string `json:"team_a_name"`
-	TeamATag  string `json:"team_a_tag"`
-	TeamBName string `json:"team_b_name"`
-	TeamBTag  string `json:"team_b_tag"`
-	BestOf    int    `json:"best_of"`
-	Event     string `json:"event"`
+	TeamAName      string `json:"team_a_name"`
+	TeamATag       string `json:"team_a_tag"`
+	TeamBName      string `json:"team_b_name"`
+	TeamBTag       string `json:"team_b_tag"`
+	BestOf         int    `json:"best_of"`
+	Event          string `json:"event"`
+	OnChainMatchID uint64 `json:"on_chain_match_id,omitempty"`
+	VaultAddress   string `json:"vault_address,omitempty"`
 }
 
 // CreateMatch creates a match via the Admin API.

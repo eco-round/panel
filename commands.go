@@ -81,34 +81,10 @@ func (a *App) cmdMatchCreate(args []string) {
 
 	// Run in goroutine to not block TUI
 	go func() {
-		req := CreateMatchRequest{
-			TeamAName: teamA,
-			TeamATag:  toTag(teamA),
-			TeamBName: teamB,
-			TeamBTag:  toTag(teamB),
-			BestOf:    bestOf,
-			Event:     event,
-		}
-
-		// Step 1: create match record in DB
-		match, err := a.api.CreateMatch(req)
-		if err != nil {
-			a.tviewApp.QueueUpdateDraw(func() {
-				a.addLog(fmt.Sprintf("[red]API Error: %v", err))
-			})
-			return
-		}
-
-		a.tviewApp.QueueUpdateDraw(func() {
-			a.addLog(fmt.Sprintf("[green]Match #%d created[white]: [aqua]%s [darkgray]vs [orangered]%s",
-				match.ID, teamA, teamB))
-		})
-
-		// Step 2: deploy vault on-chain
+		// Step 1: deploy vault on-chain first (source of truth)
 		if a.chain == nil {
 			a.tviewApp.QueueUpdateDraw(func() {
-				a.addLog("[yellow]Chain not configured — vault not deployed on-chain")
-				a.selectMatch(match.ID)
+				a.addLog("[red]Chain not configured — cannot create match")
 			})
 			return
 		}
@@ -121,22 +97,38 @@ func (a *App) cmdMatchCreate(args []string) {
 		if chainErr != nil {
 			a.tviewApp.QueueUpdateDraw(func() {
 				a.addLog(fmt.Sprintf("[red]Chain Error: %v", chainErr))
-				a.selectMatch(match.ID)
-			})
-			return
-		}
-
-		// Step 3: save vault address back to DB
-		if updateErr := a.api.UpdateMatchVault(match.ID, onChainID, vaultAddr.Hex()); updateErr != nil {
-			a.tviewApp.QueueUpdateDraw(func() {
-				a.addLog(fmt.Sprintf("[red]Vault update Error: %v", updateErr))
-				a.selectMatch(match.ID)
 			})
 			return
 		}
 
 		a.tviewApp.QueueUpdateDraw(func() {
 			a.addLog(fmt.Sprintf("[green]Vault deployed[white]: on-chain #%d → [aqua]%s", onChainID, vaultAddr.Hex()))
+			a.addLog("[yellow]Saving to database...")
+		})
+
+		// Step 2: create DB record with on-chain data already set
+		req := CreateMatchRequest{
+			TeamAName:      teamA,
+			TeamATag:       toTag(teamA),
+			TeamBName:      teamB,
+			TeamBTag:       toTag(teamB),
+			BestOf:         bestOf,
+			Event:          event,
+			OnChainMatchID: onChainID,
+			VaultAddress:   vaultAddr.Hex(),
+		}
+
+		match, err := a.api.CreateMatch(req)
+		if err != nil {
+			a.tviewApp.QueueUpdateDraw(func() {
+				a.addLog(fmt.Sprintf("[red]API Error: %v", err))
+			})
+			return
+		}
+
+		a.tviewApp.QueueUpdateDraw(func() {
+			a.addLog(fmt.Sprintf("[green]Match #%d saved[white]: [aqua]%s [darkgray]vs [orangered]%s",
+				match.ID, teamA, teamB))
 			a.selectMatch(match.ID)
 			a.requestFetch()
 		})
