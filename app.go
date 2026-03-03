@@ -33,6 +33,9 @@ type FetchResult struct {
 	SelectedMatch  *Match
 	MatchResults   []MatchResult
 	VaultStats     *VaultStats
+	// ChainStatuses maps Match.ID → on-chain status uint8 (0=Open,1=Locked,2=Resolved)
+	// Populated for every match that has a VaultAddress.
+	ChainStatuses  map[uint]uint8
 	ChainConnected bool
 	ChainError     error
 	APIConnected   bool
@@ -73,6 +76,7 @@ type AppState struct {
 	SelectedMatch   *Match
 	MatchResults    []MatchResult
 	VaultStats      *VaultStats
+	ChainStatuses   map[uint]uint8 // on-chain status per match ID
 	SystemStats     SystemStats
 	ChainConnected  bool
 	ChainError      error
@@ -237,7 +241,19 @@ func (a *App) doFetch() {
 		sysStats.TotalResults += len(m.Results)
 	}
 
-	// 4. Fetch match details (single match + results)
+	// 4. Fetch on-chain status for ALL matches (1 RPC call per vault — fast).
+	chainStatuses := map[uint]uint8{}
+	if a.chain != nil {
+		for _, m := range matches {
+			if m.VaultAddress != "" {
+				if s, err := a.chain.ReadVaultStatus(m.VaultAddress); err == nil {
+					chainStatuses[m.ID] = s
+				}
+			}
+		}
+	}
+
+	// 5. Fetch full vault stats for selected match (deposits, yield, winner)
 	var selectedMatch *Match
 	var matchResults []MatchResult
 	var vaultStats *VaultStats
@@ -263,7 +279,7 @@ func (a *App) doFetch() {
 		}
 	}
 
-	// 5. Send result to UI thread
+	// 6. Send result to UI thread
 	result := FetchResult{
 		Matches:        matches,
 		SystemStats:    sysStats,
@@ -271,6 +287,7 @@ func (a *App) doFetch() {
 		SelectedMatch:  selectedMatch,
 		MatchResults:   matchResults,
 		VaultStats:     vaultStats,
+		ChainStatuses:  chainStatuses,
 		ChainConnected: chainConnected,
 		ChainError:     chainError,
 		APIConnected:   apiConnected,
@@ -287,6 +304,8 @@ func (a *App) applyFetchResult(r FetchResult) {
 	a.state.Matches = r.Matches
 	a.state.SystemStats = r.SystemStats
 	a.state.APIConnected = r.APIConnected
+	// ChainStatuses covers all matches — always safe to update
+	a.state.ChainStatuses = r.ChainStatuses
 
 	// Only update details if selection hasn't changed during fetch
 	if a.state.SelectedMatchID == r.RequestedID {

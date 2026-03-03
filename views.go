@@ -63,13 +63,20 @@ func (a *App) refreshMatchTable() {
 			idColor = tcell.ColorYellow
 		}
 
-		statusColor := statusToColor(m.Status)
+		// Prefer on-chain status; fall back to API status
+		displayStatus := m.Status
+		chainBadge := ""
+		if cs, ok := a.state.ChainStatuses[m.ID]; ok {
+			displayStatus = onChainStatusStr(cs)
+			chainBadge = "⛓"
+		}
+		statusColor := statusToColor(displayStatus)
 
 		table.SetCell(row, 0, tview.NewTableCell(fmt.Sprintf("%s%d", prefix, m.ID)).SetTextColor(idColor).SetExpansion(1))
 		table.SetCell(row, 1, tview.NewTableCell(m.TeamATag).SetTextColor(tcell.ColorAqua).SetExpansion(1))
 		table.SetCell(row, 2, tview.NewTableCell("vs").SetTextColor(tcell.ColorDarkGray).SetExpansion(0))
 		table.SetCell(row, 3, tview.NewTableCell(m.TeamBTag).SetTextColor(tcell.ColorOrangeRed).SetExpansion(1))
-		table.SetCell(row, 4, tview.NewTableCell(strings.ToUpper(m.Status)).SetTextColor(statusColor).SetExpansion(1))
+		table.SetCell(row, 4, tview.NewTableCell(strings.ToUpper(displayStatus)+chainBadge).SetTextColor(statusColor).SetExpansion(1))
 		table.SetCell(row, 5, tview.NewTableCell(truncStr(m.Event, 22)).SetTextColor(tcell.ColorDarkGray).SetExpansion(1))
 	}
 
@@ -101,7 +108,24 @@ func (a *App) refreshDetailView() {
 
 	sc := statusColorName(m.Status)
 	fmt.Fprintf(a.detailView, "  [aqua::b]%s[white] vs [orangered::b]%s\n", m.TeamAName, m.TeamBName)
-	fmt.Fprintf(a.detailView, "  [white]Status      [%s]%s\n", sc, strings.ToUpper(m.Status))
+	fmt.Fprintf(a.detailView, "  [white]API Status  [%s]%s\n", sc, strings.ToUpper(m.Status))
+
+	// On-chain status (from VaultStats — source of truth)
+	if a.state.VaultStats != nil {
+		cs := onChainStatusStr(a.state.VaultStats.Status)
+		cc := statusColorName(cs)
+		fmt.Fprintf(a.detailView, "  [white]Chain Status[%s]%s [darkgray]⛓\n", cc, strings.ToUpper(cs))
+		if a.state.VaultStats.Status == 2 { // Resolved
+			winnerStr, winnerColor := "TEAM B", "orangered"
+			if a.state.VaultStats.Winner == 1 {
+				winnerStr, winnerColor = "TEAM A", "aqua"
+			}
+			fmt.Fprintf(a.detailView, "  [white]Chain Winner [%s::b]%s [darkgray]⛓\n", winnerColor, winnerStr)
+		}
+	} else if m.VaultAddress != "" && a.state.ChainConnected {
+		fmt.Fprintf(a.detailView, "  [white]Chain Status [yellow]loading...\n")
+	}
+
 	fmt.Fprintf(a.detailView, "  [white]Event       [darkgray]%s\n", m.Event)
 	fmt.Fprintf(a.detailView, "  [white]Best Of     [darkgray]%d\n", m.BestOf)
 	if !m.StartTime.IsZero() {
@@ -114,7 +138,7 @@ func (a *App) refreshDetailView() {
 	if m.VaultAddress != "" {
 		short := m.VaultAddress
 		if len(short) > 10 {
-			short = short[:6] + "…" + short[len(short)-4:]
+			short = short[:6] + "\u2026" + short[len(short)-4:]
 		}
 		fmt.Fprintf(a.detailView, "  [white]Vault       [darkgray]%s", short)
 	}
@@ -202,6 +226,38 @@ func (a *App) refreshSourcesView() {
 		return
 	}
 
+	// ── On-Chain State (source of truth) ─────────────────────────────
+	fmt.Fprintf(a.sourcesView, "  [aqua::b]── On-Chain State ⛓\n")
+	if a.state.VaultStats != nil {
+		cs := a.state.VaultStats.Status
+		csStr := onChainStatusStr(cs)
+		csColor := statusColorName(csStr)
+		fmt.Fprintf(a.sourcesView, "  [white]Contract   [%s::b]%s\n", csColor, strings.ToUpper(csStr))
+		switch cs {
+		case 2: // Resolved
+			winnerStr, winnerColor := "TEAM B", "orangered"
+			if a.state.VaultStats.Winner == 1 {
+				winnerStr, winnerColor = "TEAM A", "aqua"
+			}
+			fmt.Fprintf(a.sourcesView, "  [white]Winner     [%s::b]%s [green]✓\n", winnerColor, winnerStr)
+		case 1: // Locked
+			fmt.Fprintf(a.sourcesView, "  [darkgray]  Awaiting match result...\n")
+		default: // Open
+			fmt.Fprintf(a.sourcesView, "  [darkgray]  Awaiting match start...\n")
+		}
+	} else if a.state.ChainConnected {
+		fmt.Fprintf(a.sourcesView, "  [yellow]Loading...\n")
+	} else {
+		m := a.state.SelectedMatch
+		if m != nil && m.VaultAddress == "" {
+			fmt.Fprintf(a.sourcesView, "  [darkgray]No vault deployed\n")
+		} else {
+			fmt.Fprintf(a.sourcesView, "  [red]Chain offline\n")
+		}
+	}
+
+	// ── Data Sources (API consensus) ─────────────────────────────────
+	fmt.Fprintf(a.sourcesView, "\n  [aqua::b]── Sources (Off-Chain Consensus)\n")
 	sources := []string{"pandascore", "vlr", "liquipedia"}
 	startedCount := 0
 	endedCount := 0
@@ -236,19 +292,16 @@ func (a *App) refreshSourcesView() {
 		}
 	}
 
-	// Consensus logic
+	// Consensus summary
 	fmt.Fprintf(a.sourcesView, "\n  [aqua::b]── Consensus ──\n")
 
-	// Started consensus (for lockMatch)
 	if startedCount >= 2 {
 		fmt.Fprintf(a.sourcesView, "  [white]Started   [green::b]%d/3 → LOCK ✓\n", startedCount)
 	} else if startedCount > 0 {
 		fmt.Fprintf(a.sourcesView, "  [white]Started   [yellow]%d/3\n", startedCount)
 	}
 
-	// Ended consensus (for resolveMatch)
 	if endedCount >= 2 {
-		// Find majority winner
 		bestWinner := ""
 		bestCount := 0
 		for w, c := range winnerVotes {
@@ -399,8 +452,8 @@ func statusToColor(s string) tcell.Color {
 		return tcell.ColorDarkCyan
 	case "locked":
 		return tcell.ColorYellow
-	case "finished":
-		return tcell.ColorGray
+	case "resolved", "finished":
+		return tcell.ColorGreen
 	case "cancelled":
 		return tcell.ColorRed
 	}
@@ -413,17 +466,31 @@ func statusColorName(s string) string {
 		return "darkcyan"
 	case "locked":
 		return "yellow"
-	case "finished":
-		return "gray"
+	case "resolved", "finished":
+		return "green"
 	case "cancelled":
 		return "red"
 	}
 	return "white"
 }
 
+// onChainStatusStr converts the on-chain MatchStatus enum to a display string.
+// 0 = Open, 1 = Locked, 2 = Resolved
+func onChainStatusStr(s uint8) string {
+	switch s {
+	case 0:
+		return "open"
+	case 1:
+		return "locked"
+	case 2:
+		return "resolved"
+	}
+	return "unknown"
+}
+
 func truncStr(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max-1] + "…"
+	return s[:max-1] + "\u2026"
 }
